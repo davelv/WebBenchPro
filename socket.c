@@ -18,6 +18,7 @@
 #include <netdb.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 #include "socket.h"
 int
 Socket(const char *host, int clientPort)
