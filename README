@@ -1,0 +1,16 @@
+Webbench_pro is modified from webbech which you can see it blow.
+Webbench_pro was written by Dave 2011 (davelv@qq.com).
+Wwbbench_pro is a simple Web benchmarker and faster,
+lower resource requirement than the original version.
+
+Enjoy it & views are welcome.
+
+*************************************************************
+
+COPYRIGHT FROM WEBBENCH:
+Webbench was written by Radim Kolar 1997-2004 (hsn@netmag.cz).
+
+UNIX sockets code (socket.c) taken from popclient 1.5 4/1/94 
+public domain code, created by Virginia Tech Computing Center.
+
+Copyright: GPL (see /usr/share/common-licenses/GPL)
