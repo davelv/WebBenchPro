@@ -504,7 +504,7 @@ outloop:	s=Socket(p_arg->host,p_arg->port);
 				}
                                 else{	//check http status
                                         p_arg->bytes += i;
-					if ((cnt++ == 0)&&(http_response_check(buf))) {
+					if ((cnt++ == 0)&&(http_response_check(buf)<0)) {
                         			ERR_PROCESS (p_arg->httperr, s, outloop);
 					}
 				}
@@ -522,12 +522,12 @@ outloop:	s=Socket(p_arg->host,p_arg->port);
 int
 http_response_check(const char *response)
 {
-	int status;
+	int status=0;
 	float version;
 	//HTTP/
 	response+=5;
 	if ( (sscanf(response, "%f %d",&version,&status)==2) &&
-		(status>=200 || status <300))
+		(status>=200 && status <300))
 		return 0;
 
 	else	return -1;
