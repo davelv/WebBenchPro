@@ -39,45 +39,57 @@
 #define HTTP_09		0
 #define HTTP_10		1
 #define HTTP_11		2
-#define REQUEST_SIZE	2048
 
-#define DEFAULT_CLIENTS	1
+#define BUF_SIZE	1024
+#define URL_SIZE	1500
+#define REQUEST_SIZE	2048
+#define START_SLEEP	10000
+
+#define DEFAULT_PROXY	0
+#define DEFAULT_CLIENT	1
 #define DEFAULT_TIME	30
 #define DEFAULT_FORCE	0
 #define DEFAULT_PORT	80
 #define DEFAULT_METHOD	METHOD_GET
 
 #define DEFAULT_FORE_RELOAD	0
+#define DEFAULT_STACK_SIZE	32768
 #define DEFAULT_HTTP_VER	HTTP_11
 /* globals */
-int g_http_ver= DEFAULT_HTTP_VER;
-int g_method = DEFAULT_METHOD;
-int g_clients = DEFAULT_CLIENTS;
-int g_force = DEFAULT_FORCE;
-int g_force_reload = DEFAULT_FORE_RELOAD;
-int g_port = DEFAULT_PORT;
-int g_bench_time = DEFAULT_TIME;
-char *g_proxyhost = NULL;
-char g_host[MAXHOSTNAMELEN];
-char g_request[REQUEST_SIZE];
-
+struct parameter{
+	int force;
+	int force_reload;
+	int proxy;
+	int http_ver;
+	int method;
+	int port;
+	int clients;
+	int bench_time;
+	char	*host;
+	char	*request;
+};
 struct thread_arg{
 	char *host;
-	int  port;
 	char *request;
-	unsigned long long speed;
-	unsigned long long failed;
-	unsigned long long httperr;
-	unsigned long long bytes;
+	int  force;	
+	int  port;
+	int  http_ver;
+	unsigned long speed;
+	unsigned long failed;
+	unsigned long httperr;
+	unsigned long bytes;
 };
-	
+static char const * const gs_http_method[] =
+{
+	"GET","HEAD","OPTION","TRACE",
+};
 
 /* prototypes */
 static void *bench_thread(void *para);
-static int bench(void);
-static void build_request(const char *url);
+static int bench(struct parameter *para);
+static void build_request(const char *url, struct parameter *para);
 static int  http_response_check(const char *response);
-static int parse_opt(int argc, char *argv[]);
+static int parse_opt(int argc, char *argv[], struct parameter *para);
 static int resource_set(int clients);
 
 
@@ -107,13 +119,14 @@ resource_set(int clients)
 	
 	return 0;
 }
+/* NOT USE
 static void
 exit_handler(int signal)
 {
         if (signal == SIGUSR1)
 		pthread_exit(NULL);
 }
-
+*/
 static void
 usage(void)
 {
@@ -134,17 +147,17 @@ usage(void)
                 "  -?|-h|--help                    This information.\n"
                 "  -V|--version                    Display program version.\n"
                );
-};
+};   
 static int 
-parse_opt(int argc, char *argv[])
+parse_opt(int argc, char *argv[], struct parameter *para)
 {
-	static const struct option long_options[] = {
-		{"g_force",	no_argument,		&g_force,		1},
-		{"reload",	no_argument,		&g_force_reload,	1},
-		{"get",		no_argument,		&g_method,	METHOD_GET},
-		{"head",	no_argument,		&g_method,	METHOD_HEAD},
-		{"options",	no_argument,		&g_method,	METHOD_OPTIONS},
-		{"trace",	no_argument,		&g_method,	METHOD_TRACE},
+	const struct option long_options[] = {
+		{"force",	no_argument,		&para->force,		1},
+		{"reload",	no_argument,		&para->force_reload,	1},
+		{"get",		no_argument,		&para->method,	METHOD_GET},
+		{"head",	no_argument,		&para->method,	METHOD_HEAD},
+		{"options",	no_argument,		&para->method,	METHOD_OPTIONS},
+		{"trace",	no_argument,		&para->method,	METHOD_TRACE},
 		{"help",	no_argument,		NULL,		'?'},
 		{"http09",	no_argument,		NULL,		'9'},
 		{"http10",	no_argument,		NULL,		'1'},
@@ -170,30 +183,30 @@ parse_opt(int argc, char *argv[])
 			case  0 :
 				break;
 			case 'f':
-				g_force = 1;
+				para->force = 1;
 				break;
 			case 'r':
-				g_force_reload = 1;
+				para->force_reload = 1;
 				break;
 			case '9':
-				g_http_ver = HTTP_09;
+				para->http_ver = HTTP_09;
 				break;
 			case '1':
-				g_http_ver = HTTP_10;
+				para->http_ver = HTTP_10;
 				break;
 			case '2':
-				g_http_ver = HTTP_11;
+				para->http_ver = HTTP_11;
         	                break;
 	                case 'V':
 	                        printf(PROGRAM_VERSION"\n");
 	                        return 0;
 	                case 't':
-	                        g_bench_time=atoi(optarg);
+	                        para->bench_time=atoi(optarg);
 	                        break;
 	                case 'p':
+                	        para->proxy=1;
 	                        /* proxy server parsing server:port */
         	                tmp=strrchr(optarg,':');
-                	        g_proxyhost=optarg;
                         	if (tmp==NULL) {
 	                                break;
 	                        }
@@ -206,7 +219,7 @@ parse_opt(int argc, char *argv[])
                         	        return -1;
 	                        }
         	                *tmp='\0';
-                	        if ( (g_port=atoi(tmp+1) < 0)) {
+                	        if ( (para->port=atoi(tmp+1) < 0)) {
 					fprintf(stderr,"Error in option --proxy %s Port number is invaild.\n",optarg);
 					return -1;
 				}
@@ -218,7 +231,7 @@ parse_opt(int argc, char *argv[])
         	                return 0;
                 	        break;
 	                case 'c':
-        	                g_clients=atoi(optarg);
+        	                para->clients=atoi(optarg);
                 	        break;
 		}
 	}
@@ -229,10 +242,10 @@ parse_opt(int argc, char *argv[])
                 return 2;
         }
 
-        if (g_clients <= 0)
-		g_clients = DEFAULT_CLIENTS;
-        if (g_bench_time <= 0) 
-		g_bench_time = DEFAULT_TIME;
+        if (para->clients <= 0)
+		para->clients = DEFAULT_CLIENT;
+        if (para->bench_time <= 0) 
+		para->bench_time = DEFAULT_TIME;
 	return 1;
 }
 
@@ -240,18 +253,28 @@ int
 main(int argc, char *argv[])
 {
 	int ret;
+	char host[MAXHOSTNAMELEN];
+	char request[REQUEST_SIZE];
+	struct parameter para =
+	{
+		DEFAULT_FORCE, DEFAULT_FORE_RELOAD,
+		DEFAULT_PROXY, DEFAULT_HTTP_VER,
+		DEFAULT_METHOD,DEFAULT_PORT,
+		DEFAULT_CLIENT,DEFAULT_TIME,
+		host,	request,
+	};
         // parse options
-        if  ( (ret=parse_opt(argc, argv)) <=0 )
+        if  ( (ret=parse_opt(argc, argv, &para)) <=0 )
 		return  ret<0 ? 2 : 0;
         
-	build_request(argv[argc-1]);
+	build_request(argv[argc-1], &para);
 	/* Copyright */
         printf(	"\nWebBenchPro - Advanced Simple Web Benchmark "PROGRAM_VERSION"\n"
                 "Copyright (c) Radim Kolar 1997-2004, GPL Open Source Software.\n"
 		"Modified By Davelv 2011-11-03\n"
                );
 	//check resourse limits
-	if ( (ret=resource_set(g_clients)) <0 )
+	if ( (ret=resource_set(para.clients)) <0 )
 	{
 		fprintf(stderr, "\nSet %s  limit failed. \n"
 			"Try less clients or use higher authority or set \"ulimit -n -u\" manualy\n",
@@ -259,24 +282,8 @@ main(int argc, char *argv[])
 		return 4;
 	}
         /* print bench info */
-        printf("\nBenchmarking: ");
-        switch(g_method) {
-        	case METHOD_GET:
-        	default:
-                	printf("GET");
-                	break;
-        	case METHOD_OPTIONS:
-                	printf("OPTIONS");
-                	break;
-	        case METHOD_HEAD:
-        	        printf("HEAD");
-                	break;
-	        case METHOD_TRACE:
-        	        printf("TRACE");
-                	break;
-	        }
-        printf(" %s",argv[argc-1]);
-        switch(g_http_ver) {
+        printf("\nBenchmarking:%s %s", gs_http_method[para.method], argv[argc-1]);
+        switch(para.http_ver) {
         case 0:
                 puts(" (using HTTP/0.9)"); break;
 	case 1:
@@ -284,49 +291,42 @@ main(int argc, char *argv[])
         case 2:
                 puts(" (using HTTP/1.1)"); break;
         }
-        return bench();
+        /* check avaibility of target server */
+        ret = Socket(para.host, para.port);
+        if (ret<0) {
+                fprintf(stderr,"\nConnect to server failed. Aborting benchmark.\n");
+                return 1;
+        }   
+        close(ret);
+        return bench(&para);
 }
 
-void build_request(const char *url)
+void 
+build_request(const char *url, struct parameter *para)
 {
         char tmp[10];
         int i;
 
-        bzero(g_host,MAXHOSTNAMELEN);
-        bzero(g_request,REQUEST_SIZE);
+        bzero(para->host,MAXHOSTNAMELEN);
+        bzero(para->request,REQUEST_SIZE);
 
-        if (g_force_reload && g_proxyhost!=NULL && g_http_ver<1) g_http_ver=1;
-        if (g_method==METHOD_HEAD && g_http_ver<1) g_http_ver=1;
-        if (g_method==METHOD_OPTIONS && g_http_ver<2) g_http_ver=2;
-        if (g_method==METHOD_TRACE && g_http_ver<2) g_http_ver=2;
+        if (para->force_reload && para->proxy && para->http_ver<HTTP_10) para->http_ver=HTTP_10;
+        if (para->method==METHOD_HEAD && para->http_ver<HTTP_10) para->http_ver=HTTP_10;
+        if (para->method==METHOD_OPTIONS && para->http_ver<HTTP_11) para->http_ver=HTTP_11;
+        if (para->method==METHOD_TRACE && para->http_ver<HTTP_11) para->http_ver=HTTP_11;
 
-        switch(g_method) {
-        default:
-        case METHOD_GET:
-                strcpy(g_request,"GET");
-                break;
-        case METHOD_HEAD:
-                strcpy(g_request,"HEAD");
-                break;
-        case METHOD_OPTIONS:
-                strcpy(g_request,"OPTIONS");
-                break;
-        case METHOD_TRACE:
-                strcpy(g_request,"TRACE");
-                break;
-        }
-
-        strcat(g_request," ");
+        strcpy(para->request, gs_http_method[para->method]);
+	strcat(para->request," ");
 
         if (NULL==strstr(url,"://")) {
                 fprintf(stderr, "\n%s: is not a valid URL.\n",url);
                 exit(2);
         }
-        if (strlen(url)>1500) {
+        if (strlen(url)>URL_SIZE) {
                 fprintf(stderr,"URL is too long.\n");
                 exit(2);
         }
-        if (g_proxyhost==NULL)
+        if (!para->proxy)
                 if (0!=strncasecmp("http://",url,7)) {
                         fprintf(stderr,"\nOnly HTTP protocol is directly supported, set --proxy for others.\n");
                         exit(2);
@@ -339,49 +339,49 @@ void build_request(const char *url)
                 fprintf(stderr,"\nInvalid URL syntax - hostname don't ends with '/'.\n");
                 exit(2);
         }
-        if (g_proxyhost==NULL) {
+        if (para->proxy) {
+		strcat(para->request,url);
+	} else {
                 /* get port from hostname */
                 if (index(url+i,':')!=NULL &&
                                 index(url+i,':')<index(url+i,'/')) {
-                        strncpy(g_host,url+i,strchr(url+i,':')-url-i);
+                        strncpy(para->host,url+i,strchr(url+i,':')-url-i);
                         bzero(tmp,10);
                         strncpy(tmp,index(url+i,':')+1,strchr(url+i,'/')-index(url+i,':')-1);
                         /* printf("tmp=%s\n",tmp); */
-                        g_port=atoi(tmp);
-                        if (g_port==0) g_port=80;
-                } else {
-                        strncpy(g_host,url+i,strcspn(url+i,"/"));
+                        para->port=atoi(tmp);
+                        if (para->port==0) para->port=DEFAULT_PORT;
+                	} 
+		else {
+                        strncpy(para->host,url+i,strcspn(url+i,"/"));
                 }
-                // printf("Host=%s\n",host);
-                strcat(g_request+strlen(g_request),url+i+strcspn(url+i,"/"));
-        } else {
-                // printf("ProxyHost=%s\nProxyPort=%d\n",g_proxyhost,g_port);
-                strcat(g_request,url);
+                strcat(para->request+strlen(para->request),url+i+strcspn(url+i,"/"));
         }
-        if (g_http_ver==1)
-                strcat(g_request," HTTP/1.0");
-        else if (g_http_ver==2)
-                strcat(g_request," HTTP/1.1");
-        strcat(g_request,"\r\n");
-        if (g_http_ver>0)
-                strcat(g_request,"User-Agent: WebBenchPro "PROGRAM_VERSION"\r\n");
-        if (g_proxyhost==NULL && g_http_ver>0) {
-                strcat(g_request,"Host: ");
-                strcat(g_request,g_host);
-                strcat(g_request,"\r\n");
+        if (para->http_ver==1)
+                strcat(para->request," HTTP/1.0");
+        else if (para->http_ver==2)
+                strcat(para->request," HTTP/1.1");
+        strcat(para->request,"\r\n");
+        if (para->http_ver>0)
+                strcat(para->request,"User-Agent: WebBenchPro "PROGRAM_VERSION"\r\n");
+        if (!para->proxy && para->http_ver>0) {
+                strcat(para->request,"Host: ");
+                strcat(para->request,para->host);
+                strcat(para->request,"\r\n");
         }
-        if (g_force_reload && g_proxyhost!=NULL) {
-                strcat(g_request,"Pragma: no-cache\r\n");
+        if (para->force_reload && para->proxy) {
+                strcat(para->request,"Pragma: no-cache\r\n");
         }
-        if (g_http_ver>1)
-                strcat(g_request,"Connection: close\r\n");
+        if (para->http_ver>1)
+                strcat(para->request,"Connection: close\r\n");
         /* add empty line at end */
-        if (g_http_ver>0) strcat(g_request,"\r\n");
-        // printf("Req=%s\n",g_request);
+        if (para->http_ver>0) strcat(para->request,"\r\n");
+        // printf("Req=%s\n",para->request);
 }
 
 /* vraci system rc error kod */
-static int bench(void)
+static int 
+bench(struct parameter *para)
 {
 	int i;
 	unsigned long long speed=0;
@@ -389,90 +389,71 @@ static int bench(void)
 	unsigned long long httperr=0;
 	unsigned long long bytes=0;
 	// set thread args
-	struct thread_arg *args = malloc (sizeof(struct thread_arg)*g_clients);
+	struct thread_arg *args = malloc (sizeof(struct thread_arg)*para->clients);
 	if (args == NULL){
                 fprintf(stderr,"Malloc thread args failed. Aborting benchmark.\n");
                 return 3;
         }	
 	memset(args, 0, sizeof(args));
-	for (i=0; i<g_clients; i++)
+	for (i=0; i<para->clients; i++)
 	{
-		args[i].host = g_proxyhost==NULL?g_host:g_proxyhost;
-		args[i].port = g_port;
-		args[i].request = g_request;
+		args[i].host = para->host;
+		args[i].port = para->port;
+		args[i].request = para->request;
+		args[i].http_ver = para->http_ver;
+		args[i].force = para->force;
 	}
 	//theads
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
-	if (pthread_attr_setstacksize(&attr, 32768)){;//stack size 32K
+	if (pthread_attr_setstacksize(&attr, DEFAULT_STACK_SIZE)){;//stack size 32K
 		fprintf(stderr,"Set stack size failed . Aborting benchmark.\n");
 		return 3;
 	}
-	pthread_t *threads= malloc(sizeof(pthread_t)*(g_clients));
+	pthread_t *threads= malloc(sizeof(pthread_t)*(para->clients));
 	if (threads == NULL){
 		fprintf(stderr,"Malloc threads failed. Aborting benchmark.\n");
 		return 3;
 	}
-        /* check avaibility of target server */
-	i = Socket(g_proxyhost==NULL?g_host:g_proxyhost, g_port);
-        if (i<0) {
-                fprintf(stderr,"\nConnect to server failed. Aborting benchmark.\n");
-                return 1;
-        }
-        close(i);
-        printf("\n%d clients, running %d sec",g_clients, g_bench_time);
-        if (g_force) printf(", early socket close");
-        if (g_proxyhost!=NULL) printf(", via proxy server %s:%d",g_proxyhost,g_port);
-        if (g_force_reload) printf(", forcing reload");
+        printf("\n%d clients, running %d sec",para->clients, para->bench_time);
+        if (para->force) printf(", early socket close");
+        if (para->proxy) printf(", via proxy server %s:%d",para->host,para->port);
+        if (para->force_reload) printf(", forcing reload");
         printf(".\n");
-        /* setup alarm signal handler */
-        struct sigaction  sa_exit;
-	
-        sa_exit.sa_handler=exit_handler;
-        sa_exit.sa_flags=0;
-        if (sigaction(SIGUSR1,&sa_exit,NULL))
-                exit(3);
 	//new thread
-	for (i=0; i<g_clients; i++)
+	for (i=0; i<para->clients; i++)
 	{
 		int ret_p =pthread_create(threads+i, &attr, bench_thread, args+i);
 		if (ret_p)
 		{
 			printf("pthread create error %d on %d\n", ret_p, i);
-			i-- , g_clients--;
+			i-- , para->clients--;
 			//exit (-1);
 		}
 	}
 	//main thread sleep
-	sleep(g_bench_time);
-	//cancle threads
-	for (i=0; i<g_clients; i++)
+	sleep(para->bench_time);
+	//calc the result
+	for (i=0; i<para->clients; i++)
 	{
-		pthread_kill(threads[i], SIGUSR1);
-		//pthread_cancel(threads[i]);
-	}
-	//join & calc the result
-	for (i=0; i<g_clients; i++)
-	{
-		pthread_join(threads[i], NULL);	
-		//printf("%llu,%llu,%llu,%llu\n", args[i].speed, args[i].httperr, args[i].failed, args[i].bytes);
 		speed += args[i].speed;
 		httperr += args[i].httperr;
 		failed += args[i].failed;
 		bytes += args[i].bytes;
 	}
         printf("\nSpeed=%llu pages/sec, %llu bytes/sec.\nRequests: %llu ok, %llu http error, %llu failed.\n",
-               (speed+httperr+failed)/g_bench_time, bytes/g_bench_time , speed, httperr, failed);
-
+               (speed+httperr+failed)/para->bench_time, bytes/para->bench_time , speed, httperr, failed);
 	return 0;
 }
 
 #define ERR_PROCESS(a, b, c) {a++; close(b); goto c;}
-void *bench_thread(void *arg)
+void *
+bench_thread(void *arg)
 {
+	usleep(START_SLEEP);
 	struct thread_arg *p_arg = (struct thread_arg *)arg;
         int rlen = strlen(p_arg->request);
-        char buf[1500];
+        char buf[BUF_SIZE];
         int s,i,cnt;
         
 	while(1) {
@@ -484,15 +465,15 @@ outloop:	s=Socket(p_arg->host,p_arg->port);
                 if (rlen!=write(s,p_arg->request,rlen)) {
                         ERR_PROCESS (p_arg->failed, s, outloop);
                 }
-                if (g_http_ver==0)
+                if (p_arg->http_ver==HTTP_09)
                         if (shutdown(s,1)) {
                         	ERR_PROCESS (p_arg->failed, s, outloop);
                         }
-                if (g_force == 0) {
+                if (p_arg->force == 0) {
                         /* read all available data from socket */
 			cnt = 0;
                         while (1) {
-				i = read(s, buf, 1500);
+				i = read(s, buf, BUF_SIZE);
                                 if (i < 0) {
                         		ERR_PROCESS (p_arg->failed, s, outloop);
 				} 
